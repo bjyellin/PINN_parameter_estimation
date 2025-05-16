@@ -148,9 +148,9 @@ def f_true(x, y, problem):
 
 #mesh size is the size of the FEM mesh
 #num_fem_points is the number of points sampled in each direction from the FEM solution 
-def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_boundary_points, num_epochs, order, training_loop, iteration, mu_iteration=0):
+def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_boundary_points, num_epochs, order, training_loop, iteration):
     print("Starting parameter estimation")
-    
+    # print("mu_iteration is ", mu_iteration)
     class NeuralNetwork(torch.nn.Module):
         def __init__(self):
             torch.set_default_dtype(torch.float64)
@@ -187,38 +187,41 @@ def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_bounda
 
             #Make this network simpler in this file and u file 
             self.mu_net = torch.nn.Sequential(
-                torch.nn.Linear(2,5),
+                torch.nn.Linear(2,20),
                 torch.nn.Softplus(),
-                torch.nn.Linear(5,5),
+                torch.nn.Linear(20,5),
                 torch.nn.Softplus(),
                 torch.nn.Linear(5,5),
                 torch.nn.Softplus(),
                 torch.nn.Linear(5,1),
                 torch.nn.Softplus()  # Ensures positive output
             )
-
-            if mu_iteration == 0:
+            # print("mu_iteration = ", mu_iteration)
+            # if mu_iteration == 0:
                 #Load only u_net from stage A
-                if os.path.exists("u_net_from_A.pth"):
-                    print("Loading u_net from stage A")
-                    self.u_net.load_state_dict(torch.load("u_net_from_A.pth"))
-                else:
-                    self.u_net.load_state_dict(torch.load("u_net".pth))
-                
+            if os.path.exists("u_net_from_A.pth"):
+                print("Loading u_net from stage A")
+                self.u_net.load_state_dict(torch.load("u_net_from_A.pth"))
             else:
-                #Load both u_net and mu_net from previous training
-                if os.path.exists("u_net.pth"):
-                    print("Loading u_net from previous training C")
-                    self.u_net.load_state_dict(torch.load("u_net.pth"))
-                    breakpoint()
-                else:
-                    raise FileNotFoundError("Expected u_net.pth file not found.")
+                self.u_net.load_state_dict(torch.load("u_net".pth))
+                
+               
+            # else:
+            #     print("mu_iteration is not 0")
+            #     breakpoint()
+            #     #Load both u_net and mu_net from previous training
+            #     if os.path.exists("u_net.pth"):
+            #         print("Loading u_net from previous training C")
+            #         self.u_net.load_state_dict(torch.load("u_net.pth"))
+            #         breakpoint()
+            #     else:
+            #         raise FileNotFoundError("Expected u_net.pth file not found.")
 
-                if os.path.exists("mu_net.pth"):
-                    print("Loading mu_net from previous training C")
-                    mu_net.load_state_dict(torch.load("mu_net.pth"))
-                else:
-                    raise FileNotFoundError("Expected mu_net.pth file not found.")
+            #     if os.path.exists("mu_net.pth"):
+            #         print("Loading mu_net from previous training C")
+            #         self.mu_net.load_state_dict(torch.load("mu_net.pth"))
+            #     else:
+            #         raise FileNotFoundError("Expected mu_net.pth file not found.")
             
             self.log_sigma_data = torch.nn.Parameter(torch.tensor(0.0), requires_grad=True)  # For data loss
             self.log_sigma_boundary = torch.nn.Parameter(torch.tensor(0.0), requires_grad=True)   # For physics residual loss
@@ -238,7 +241,7 @@ def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_bounda
         #Now I need to fix this function. I don't want to randomly initialize the u weights. I want to keep the imported ones from the previous line
         def initialize_weights(self, seed=42):
             # breakpoint()
-            # torch.manual_seed(seed)
+            torch.manual_seed(seed)
             # Initialize mu_net weights with Xavier initialization
             for layer in self.mu_net:
                 if isinstance(layer, torch.nn.Linear):
@@ -525,7 +528,7 @@ def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_bounda
     
     model_for_mu = NeuralNetwork().initialize_weights()
     print(model_for_mu)
-    for name, param in model_for_mu.u_net.named_parameters():
+    for name, param in model_for_mu.mu_net.named_parameters():
         print(name, param.shape)
         print(param)
     # breakpoint()
@@ -554,12 +557,12 @@ def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_bounda
                 if switching_to_lbfgs_count == 0:
                     print("Switching to LBFGS")
                     switching_to_lbfgs_count = 1
-                optimizer =  torch.optim.LBFGS(model_for_mu.parameters(), max_iter=20, line_search_fn='strong_wolfe')
+                optimizer =  torch.optim.LBFGS(model_for_mu.mu_net.parameters(), max_iter=20, line_search_fn='strong_wolfe')
 
         #Try switching optimizers during training
         elif epoch == adam_lbfgs_cutoff:
             print("Just switched to LBFGS")
-            optimizer =  torch.optim.LBFGS(model_for_mu.parameters(), max_iter=20, line_search_fn='strong_wolfe')
+            optimizer =  torch.optim.LBFGS(model_for_mu.mu_net.parameters(), max_iter=20, line_search_fn='strong_wolfe')
 
         
 
@@ -1077,7 +1080,8 @@ def estimate_mu(problem, step, num_real_data_points, num_phys_points, num_bounda
     # breakpoint()
 
     bestParams = model_for_mu.state_dict()
-    torch.save({'state_dict': bestParams,}, 'neural_network_for_mu_params.pth')
+    # torch.save({'state_dict': bestParams,}, 'neural_network_for_mu_params.pth')
+    torch.save(model_for_mu.mu_net.state_dict(), 'mu_net_from_B.pth')
 
     model_for_mu_fine_mesh = model_for_mu(torch.cat((fine_points_x.reshape(-1,1).to(torch.float64),fine_points_y.reshape(-1,1).to(torch.float64)),dim=1))
     true_sol_fine_mesh = u_true(fine_points_x.reshape(-1,1).to(torch.float64),fine_points_y.reshape(-1,1).to(torch.float64), problem)
